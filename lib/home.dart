@@ -1,8 +1,12 @@
+import 'dart:developer';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+
+import 'functions/constants.dart';
+import 'functions/filetype.dart';
 
 class Home extends StatefulWidget {
   const Home({Key? key}) : super(key: key);
@@ -13,31 +17,18 @@ class Home extends StatefulWidget {
 
 class _Home extends State {
   VideoPlayerController? _controller;
-  Future<bool> _initializeVideoPlayerFuture = Future(() => false);
+  final FileFunctions _fileFunctions = FileFunctions();
   VideoPlayer? _player;
   List _listSongs = [];
   bool _showSongsList = false;
   bool _playVideo = false;
-  final String _baseDirectory = "/storage/emulated/0/Personal/shorts";
   int _selectedSongIndex = 0;
   bool setVideoCompletionCondition = false;
 
   @override
-  void initState() {
-    initStateAsync();
-    super.initState();
-  }
-
-  void initStateAsync() async {
-    _listSongs = await _getFiles();
-    _assignSong(_selectedSongIndex);
-  }
-
-  @override
   void dispose() {
-    // TODO: implement dispose
-    super.dispose();
     _controller?.dispose();
+    super.dispose();
   }
 
   @override
@@ -51,16 +42,38 @@ class _Home extends State {
           children: [
             //Video
             FutureBuilder(
-              future: _initializeVideoPlayerFuture,
+              future: _assign(_selectedSongIndex),
               builder: (_, AsyncSnapshot snap) {
                 if (snap.hasData) {
-                  return Align(
-                    alignment: Alignment.center,
-                    child: AspectRatio(
-                      aspectRatio: _controller!.value.aspectRatio,
-                      child: _player,
-                    ),
-                  );
+                  FileTypes type = snap.data;
+                  if (type == FileTypes.VIDEO) {
+                    return Align(
+                      alignment: Alignment.center,
+                      child: AspectRatio(
+                        aspectRatio: _controller!.value.aspectRatio,
+                        child: _player,
+                      ),
+                    );
+                  } else if (type == FileTypes.IMAGE) {
+                    if (_fileFunctions
+                        .isImageFile(_listSongs[_selectedSongIndex])) {
+                      return Align(
+                        alignment: Alignment.center,
+                        child: Image.file(File(
+                            "${Constants.basedirectory}/${_listSongs[_selectedSongIndex]}")),
+                      );
+                    } else {
+                      return const CircularProgressIndicator();
+                    }
+                  } else {
+                    return Align(
+                      alignment: Alignment.center,
+                      child: Text(
+                        "File Type (${_listSongs[_selectedSongIndex]}) Not Determined!",
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    );
+                  }
                 } else {
                   return const Center(
                     child: CircularProgressIndicator(),
@@ -136,28 +149,29 @@ class _Home extends State {
     );
   }
 
-  void _handleNextAndPreviousPlayingSongHandler(DragEndDetails details) {
+  Future<void> _handleNextAndPreviousPlayingSongHandler(
+      DragEndDetails details) async {
     if (details.primaryVelocity! > 0) {
-      _playPreviousSong();
+      await _playPreviousSong();
     } else if (details.primaryVelocity! < 0) {
-      _playNextSong();
+      await _playNextSong();
     }
   }
 
-  void _playNextSong() {
+  Future<void> _playNextSong() async {
     if (_selectedSongIndex + 1 < _listSongs.length) {
       setState(() {
-        _assignSong(_selectedSongIndex + 1);
+        _selectedSongIndex = _selectedSongIndex + 1;
       });
     } else {
       Fluttertoast.showToast(msg: "End of List");
     }
   }
 
-  void _playPreviousSong() {
+  Future<void> _playPreviousSong() async {
     if (_selectedSongIndex - 1 >= 0) {
       setState(() {
-        _assignSong(_selectedSongIndex - 1);
+        _selectedSongIndex = _selectedSongIndex - 1;
       });
     } else {
       Fluttertoast.showToast(msg: "End of List");
@@ -167,18 +181,18 @@ class _Home extends State {
   void _selectSongHandler(int index) {
     setState(() {
       _showSongsList = false;
-      _assignSong(index);
+      _assign(index);
     });
   }
 
   void _showSongList() async {
-    _listSongs = await _getFiles();
+    _listSongs = await _fileFunctions.getFiles();
     setState(() {
       _showSongsList = !_showSongsList;
     });
   }
 
-  void _videoPlayerTouchHandler() {
+  Future<void> _videoPlayerTouchHandler() async {
     if (_showSongsList) {
       setState(() {
         _showSongsList = false;
@@ -186,31 +200,31 @@ class _Home extends State {
       return;
     }
 
-    _playPauseSong();
+    await _playPauseSong();
   }
 
-  void _playPauseSong() {
+  Future<void> _playPauseSong() async {
     if (_playVideo) {
-      _pauseSong();
+      await _pauseSong();
     } else {
-      _playSong();
+      await _playSong();
     }
   }
 
-  void _playSong() {
+  Future<void> _playSong() async {
     _playVideo = true;
     if (_controller != null) {
-      _controller?.play();
+      await _controller?.play();
     } else {
       Fluttertoast.showToast(
           msg: "Can't Play the song. _Controller returned null");
     }
   }
 
-  void _pauseSong() {
+  Future<void> _pauseSong() async {
     _playVideo = false;
     if (_controller != null) {
-      _controller?.pause();
+      await _controller?.pause();
     } else {
       Fluttertoast.showToast(
           msg: "Can't Pause the song. _Controller returned null");
@@ -221,62 +235,49 @@ class _Home extends State {
     return await FilePicker.platform.getDirectoryPath();
   }
 
-  Future<List> _getFiles() async {
-    // String? path = await selectFolder();
-    // if (path == null) {
-    //   debugPrint("Directory Returned null");
-    //   return;
-    // }
-
-    Directory dir = Directory(_baseDirectory);
-    if (await dir.exists()) {
-      List<FileSystemEntity> list = dir.listSync();
-
-      List listSongs = [];
-      for (var file in list) {
-        listSongs.add(Uri.decodeComponent(_getFileName(file.uri.path)));
+  Future<FileTypes> _assign(int selectedIndex) async {
+    // Checking if the list of songs is empty then we gather the data.
+    // and if still empty then data doesn't exists so program just returns with undetermined.
+    if (_listSongs.isEmpty) {
+      _listSongs = await _fileFunctions.getFiles();
+      if (_listSongs.isEmpty) {
+        return FileTypes.UNDETERMINED;
       }
-
-      return listSongs;
-    } else {
-      debugPrint("Invalid Directory");
     }
-    return [];
+
+    FileTypes type = _fileFunctions.determineFile(_listSongs[selectedIndex]);
+    if (type == FileTypes.VIDEO) {
+      await _assignSong(selectedIndex);
+    } else if (type == FileTypes.IMAGE) {
+      await _assignImage(selectedIndex);
+    }
+    return type;
   }
 
-  String _getFileName(String value) {
-    return value.substring(value.lastIndexOf("/") + 1);
-  }
-
-  void _assignSong(int selectedIndex) {
+  Future<void> _assignImage(int selectedIndex) async {
     if (_listSongs.isEmpty) return;
+    await _controller?.dispose();
+  }
 
-    _selectedSongIndex = selectedIndex;
-    _controller?.dispose();
+  Future<void> _assignSong(int selectedIndex) async {
+    if (_listSongs.isEmpty) return;
+    await _controller?.dispose();
     _controller = VideoPlayerController.file(
-        File("$_baseDirectory/${_listSongs[selectedIndex]}"));
+        File("${Constants.basedirectory}/${_listSongs[selectedIndex]}"));
 
     setVideoCompletionCondition = false;
-    _controller?.addListener(() {
-      // print("Position: ${_controller?.value.position}");
-      // print("Duration: ${_controller?.value.duration}");
-      // print(
-      //     "Condition: ${_controller?.value.position == _controller?.value.duration}");
+    _controller?.addListener(() async {
       if (_controller?.value.position == _controller?.value.duration &&
           setVideoCompletionCondition) {
-        _playNextSong();
+        await _playNextSong();
       } else {
         setVideoCompletionCondition = true;
       }
     });
 
-    // _controller?.setLooping(true);
     _player = VideoPlayer(_controller!);
-    _initializeVideoPlayerFuture = _controller!.initialize().then((value) {
-      setState(() {
-        _playSong();
-      });
-      return true;
-    });
+    await _controller!.initialize();
+    await _playSong();
+    log("Duration is: ${_controller!.value.duration}");
   }
 }
